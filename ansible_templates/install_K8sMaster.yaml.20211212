@@ -1,0 +1,61 @@
+---
+- hosts: "{{ passed_in_hosts }}"
+  become: yes
+  remote_user: ec2-user
+  become_user: root
+  tasks:
+    - name: Set a hostname specifying strategy
+      ansible.builtin.hostname:
+        name: K8sMaster
+        use: systemd
+    
+    - name: Add repo for docker
+      yum_repository:
+        name: docker-ce
+        description: "Docker CE Stable"
+        baseurl: "https://download.docker.com/linux/centos/$releasever/$basearch/stable"
+        gpgcheck: yes
+        gpgkey: https://download.docker.com/linux/centos/gpg
+   
+    - name: Install docker package
+      yum:
+        name:
+          - docker-ce
+          - python3-pip
+          - docker-ce-cli
+          - containerd.io
+          - ca-certificates
+          - curl
+        state: latest
+  
+    - name: start and enable httpd
+      service:
+        name: docker
+        state: started
+        enabled: yes
+    
+    - name: add user ec2-user to group docker
+      user:
+        name: ec2-user
+        groups: docker
+        append: yes
+
+    - name: install 'Docker SDK for Python'
+      pip:
+        name: docker
+
+    - name: pull an image
+      docker_image:
+        name: hello-world
+        source: pull
+      tags:
+          - docker
+
+    - name: Docker hello-world
+      docker_container:
+        name: hello-world
+        image: hello-world
+        state: started
+      tags:
+         - docker
+

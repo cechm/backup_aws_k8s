@@ -1,0 +1,151 @@
+- hosts: testing
+  become: yes
+  tasks:
+    - name: Add repo for docker
+      yum_repository:
+        name: docker-ce
+        description: "Docker CE Stable"
+        baseurl: "https://download.docker.com/linux/centos/$releasever/$basearch/stable"
+        gpgcheck: yes
+        gpgkey: https://download.docker.com/linux/centos/gpg
+      tags: docker
+
+    - name: Install docker package and deps
+      yum: 
+        name: 
+          - docker-ce
+          - python3-pip  
+          - docker-ce-cli
+          - containerd.io
+          - ca-certificates
+          - curl
+        state: latest
+      tags: docker
+    
+    - name: install 'Docker SDK for Python'
+      pip:
+        name: docker
+      tags: docker
+
+    - name: start and enable docker service
+      service: 
+        name: docker
+        state: started 
+        enabled: yes
+      tags: docker
+
+    - name: add user ec2-user to group docker
+      user:
+        name: ec2-user 
+        groups: docker
+        append: yes
+      tags: docker
+
+    - name: pull an image
+      docker_image:
+        name: hello-world  
+        source: pull
+      tags: docker  
+
+    - name: Docker hello-world
+      docker_container:
+        name: hello-world
+        image: hello-world
+        state: started
+      tags: docker
+
+#    - name: Disable SELinux
+#      ansible.posix.selinux:
+#        state: disabled
+#      tags: selinux
+
+    - name: Add repo for k8s
+      yum_repository:
+        name: "Kubernetes"
+        description: "Kubernetes Stable"
+        baseurl: "https://packages.cloud.google.com/yum/repos/kubernetes-el7-$basearch"
+        gpgcheck: yes
+        gpgkey: 
+          - https://packages.cloud.google.com/yum/doc/yum-key.gpg
+          - https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg      
+      tags: k8s
+
+#    - name: swap - remove current swaps from fstab
+#      lineinfile:
+#        dest: /etc/fstab
+#        regexp: '^/[\S]+\s+none\s+swap '
+#        state: absent
+#      when: common_swap_remove_current and
+#            common_swap_check_recreate | bool
+#      tags: k8s
+
+    - name: swap - disable swap
+      command: swapoff --all
+      ignore_errors: yes
+      tags: k8s
+
+    - name: Install k8s packages and deps
+      yum:
+        name:
+          - kubectl
+          - kubeadm
+          - kubelet
+          - iproute-tc
+      tags: k8s
+
+      #    - name: set cgroup driver in /var/lib/kubelet/config.yaml   
+
+
+    - name: Update the /etc/hosts file with node name
+      tags: etchostsupdate
+      become: yes
+      become_user: root
+      lineinfile:
+        path: "/etc/hosts"
+        regexp: ".*\t{{ hostvars[item]['ansible_hostname']}}\t{{ hostvars[item]['ansible_hostname']}}"
+        line: "{{ hostvars[item]['ansible_env'].SSH_CONNECTION.split(' ')[2] }}\t{{ hostvars[item]['ansible_hostname']}}"
+        state: present
+        backup: yes
+      register: etchostsupdate
+      when: ansible_hostname != "{{ item }}" or ansible_hostname == "{{ item }}"
+      with_items: "{{groups['testing']}}"
+
+
+    - name: start and enable k8s kubelet service
+      service:
+        name: kubelet
+        state: started
+        enabled: yes
+      tags: k8s 
+
+    - name: initialize the cluster
+      shell: kubeadm init 
+      args:
+        chdir: $HOME
+        creates: cluster_initialized.txt
+      tags: k8s
+
+    - name: create directory .kube
+      become_user: ec2-user
+      file:
+        path: $HOME/.kube
+        owner: ec2-user
+        state: directory
+      tags: k8s
+
+    - name: copy k8s config admin.conf
+      become_user: ec2-user
+      copy: 
+        src: /etc/kubernetes/admin.conf
+        dest: $HOME/.kube/config
+        mode: '0644'
+        owner: ec2-user
+      tags: k8s
+
+    - name: install Pod network calico
+      become: yes
+      become_user: ec2-user
+      shell: kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml 
+      args:
+        chdir: $HOME
+      tags: k8s
